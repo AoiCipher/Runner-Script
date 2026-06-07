@@ -1,0 +1,170 @@
+name: Reconnaissance Workflow
+description: A Reconnaissance YAML Template for Runner Script Project, this is a default template that can be used for reconnaissance tasks, it includes various stages such as subdomain enumeration, DNS resolution, host enumeration, secret hunting, JavaScript reconnaissance, nuclei scanning, and subdomain takeover. Each stage contains multiple tasks that utilize different tools to perform specific actions related to reconnaissance.
+version: 1.0.0
+author: AOI
+
+variables:
+  domain: example.com
+
+script_config:
+  timeout: 3600
+  # timeout: -1 = no timeout, otherwise specify in seconds (e.g., 3600 for 1 hour)
+  
+  continue_on_failure: false
+  stop_on_failure: true
+  retry_failed_tasks: true
+  retry: 10
+  # continue_on_failure: If true, the workflow continues executing subsequent tasks even if a task fails. And it will work if stop_on_failure is false.
+  # stop_on_failure: If true, the workflow stops immediately if a task fails. And it will work if continue_on_failure is false.
+  # retry_failed_tasks: If true, failed tasks will be retried up to the specified retry count, it will work if stop_on_failure is true.
+  # retry: The number of times to retry a failed task if retry_failed_tasks is true.
+
+  save_checkpoint: true
+  # If true, execution state is saved to resume.json for resumable workflows.
+  generate_summary: true
+  # If true, generates a summary report with execution details and resource usage.
+
+stages:
+  - name: subdomain_enumeration
+    parallel: false
+    tasks:
+      - name: subfinder
+        command: subfinder -d {domain} -o subfinder.txt
+      - name: sublist3r
+        command: sublist3r -d {domain} -o sublist3r.txt
+      - name: assetfinder
+        command: assetfinder --subs-only {domain} > assetfinder.txt
+      - name: amass
+        command: amass enum -passive -d {domain} > amass.txt
+      - name: gau_subs
+        command: echo {domain} | gau --subs | unfurl domains > gau-subs.txt
+      - name: robots
+        command: robotstester -u {domain} -L > robots.txt
+
+  - name: merge_subdomains
+    depends_on:
+      - subdomain_enumeration
+    tasks:
+      - name: merge
+        command: >
+          cat subfinder.txt sublist3r.txt c9nl.txt pentestsub.txt gau-subs.txt
+          amass.txt assetfinder.txt | sort -u > subs.txt
+
+  - name: dns_resolution
+    depends_on:
+      - merge_subdomains
+    tasks:
+      - name: puredns
+        command: puredns resolve subs.txt > puredns-resolve.txt
+      - name: dnsx
+        command: dnsx -l subs.txt -a -aaaa -resp -retries 3 -o dns-info.txt
+      - name: extract_dnsx
+        command: cat dns-info.txt | awk '{print $1}' > dnsx.txt
+      - name: merge_dns
+        command: |
+          cat puredns-resolve.txt dnsx.txt | sort -u > allsub.txt
+      - name: collect_ips
+        command: |
+          dnsx -l allsub.txt -resp-only > ips.txt
+      - name: unique_ips
+        command: |
+          sort -u ips.txt > uniq-ips.txt
+
+  - name: host_enumeration
+    depends_on:
+      - dns_resolution
+    tasks:
+      - name: httpx_hosts
+        command: >
+          httpx -l allsub.txt -sc -title -tech-detect -cdn -ip -cl -location
+          -silent -o hosts.txt
+      - name: gau_urls
+        command: cat allsub.txt | gau > gau.txt
+      - name: wayback
+        command: cat allsub.txt | waybackurls > wayback.txt
+      - name: katana
+        command: >
+          katana -list allsub.txt -d 5 -jc -js-crawl -jsluice -fx -ef
+          png,jpg,jpeg,gif,svg -o katana.txt
+      - name: merge_urls
+        command: |
+          cat katana.txt wayback.txt gau.txt | uro | sort -u > urls.txt
+      - name: alive_urls
+        command: |
+          httpx -l urls.txt -mc 200 -o aliveurl.txt
+      - name: endpoints
+        command: >
+          grep -vE '\.(png|jpg|jpeg|gif|svg|css|woff|woff2|ttf|ico)$'
+          aliveurl.txt > endpoints.txt
+      - name: params
+        command: |
+          grep "=" endpoints.txt > params.txt
+
+  - name: secret_hunting
+    depends_on:
+      - host_enumeration
+    tasks:
+      - name: aws_keys
+        command: cat endpoints.txt | gf aws-keys
+      - name: jwt
+        command: cat endpoints.txt | gf jwt
+      - name: debug_logic
+        command: cat endpoints.txt | gf debug_logic
+      - name: redirect
+        command: cat endpoints.txt | gf redirect
+      - name: sqli
+        command: cat endpoints.txt | gf sqli
+      - name: xss
+        command: cat endpoints.txt | gf xss
+
+  - name: javascript_recon
+    depends_on:
+      - host_enumeration
+    tasks:
+      - name: collect_js
+        command: |
+          grep -Ei '\.js([?#].*)?$' endpoints.txt > alljs.txt
+      - name: alive_js
+        command: |
+          httpx -l alljs.txt -mc 200 -silent -o js-live.txt
+      - name: jsleaks
+        command: |
+          cat js-live.txt | jsleaks -s -l -k
+      - name: nuclei_js
+        command: >
+          cat js-live.txt | xargs -P 20 -I{} bash -c 'echo "[+] {}" && nuclei -u
+          "{}" -t exposures/'
+      - name: lazyegg
+        command: >
+          cat js-live.txt | xargs -P 20 -I{} bash -c 'lazyegg "{}" --js_urls
+          --domains --ips --leak_creds --local_storage'
+
+  - name: nuclei_scanning
+    depends_on:
+      - dns_resolution
+    tasks:
+      - name: host_scan
+        command: |
+          nuclei -l allsub.txt -as -severity low,medium,high,critical -c 50
+
+  - name: js_exposure
+    depends_on:
+      - javascript_recon
+    tasks:
+      - name: credentials
+        command: >
+          cat js-live.txt | nuclei -t prsnl/credentials-disclosure-all.yaml -c 30
+      - name: exposures
+        command: |
+          cat js-live.txt | nuclei -t ~/nuclei-templates/http/exposures -c 30
+
+  - name: subdomain_takeover
+    depends_on:
+      - dns_resolution
+    tasks:
+      - name: subzy
+        command: |
+          subzy run --targets allsub.txt
+      - name: nuclei_takeover
+        command: |
+          nuclei -l allsub.txt -t http/takeovers/

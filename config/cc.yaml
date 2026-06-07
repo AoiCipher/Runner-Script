@@ -1,0 +1,63 @@
+name: CC 
+description: A CC YAML for testing the runner script in development phase.
+version: 1.0.0
+author: AOI
+
+variables:
+  domain: example.com
+  word: test
+  # You can define any variables here that you want to use in your commands.
+  # For example, you can define a variable called "domain" and use it in your commands like {domain}.
+
+script_config:
+  timeout: 3600
+  # timeout: -1 = no timeout, otherwise specify in seconds (e.g., 3600 for 1 hour)
+  
+  continue_on_failure: false
+  stop_on_failure: true
+  retry_failed_tasks: true
+  retry: 10
+  # continue_on_failure: If true, the workflow continues executing subsequent tasks even if a task fails. And it will work if stop_on_failure is false.
+  # stop_on_failure: If true, the workflow stops immediately if a task fails. And it will work if continue_on_failure is false.
+  # retry_failed_tasks: If true, failed tasks will be retried up to the specified retry count, it will work if stop_on_failure is true.
+  # retry: The number of times to retry a failed task if retry_failed_tasks is true.
+  # retry: it start from 1, so if retry is set to 3, it will retry the failed task 2 times (total attempts = 1 original + 2 retries = 3 attempts).
+
+  save_checkpoint: true
+  # If true, execution state is saved to resume.json for resumable workflows,
+  # if RunnerScript is interrupted by CTRL+C, it can resume from the last checkpoint.
+  
+stages:
+  - name: test_phase
+    parallel: false
+    tasks:
+      - name: echo_test
+        command: echo "This is a test for {word}"
+      - name: echo_test
+        command: echo "This is a test for {word}"
+      - name: echo_test
+        command: echo "This is a test for {word}"
+      - name: echo_test
+        command: echo "This is a test for {word}"
+      - name: echo_test
+        command: echo "This is a test for {word}"
+      
+
+  - name: second_phase
+    depends_on:
+      - test_phase
+    parallel: true
+    tasks:
+      - name: echo_test_phase_2
+        command: echo "This is the second phase for {word}"
+      - name: echo_test_phase_2
+        command: echo "This is the second phase for {word}"
+      - name: echo_test_phase_2
+        command: echo "This is the second phase for {word}"
+      - name: echo_test_phase_2
+        command: echo "This is the second phase for {word}"
+      - name: echo_test_phase_2
+        command: echo "This is the second phase for {word}"
+      - name: echo_test_phase_2
+        command: echo "This is the second phase for {word}"
+     
