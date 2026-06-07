@@ -32,8 +32,8 @@ RunnerScript is a powerful, flexible automation framework that allows developers
 
 1. Clone the repository:
 ```bash
-git clone <repository-url>
-cd RunnerScript
+git clone https://github.com/AoiCipher/Runner-Script
+cd Runner-Script
 ```
 
 2. Install dependencies:
